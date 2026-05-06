@@ -5,6 +5,10 @@
   "version": "1.2.8",
   "publisher": "Ti",
   "author": "Ti",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TarelX/Windsurf-Swap-Tool.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },

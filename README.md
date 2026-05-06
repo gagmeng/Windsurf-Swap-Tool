@@ -2,7 +2,23 @@
 
 Windsurf 多账号管理与一键切换工具。
 
-## 🚀 快速开始
+## �️ 界面预览
+
+### 主界面
+
+![主界面](assets/screenshot-main.png)
+
+### 导入账号
+
+![导入账号](assets/screenshot-import.png)
+
+### 设置页
+
+![设置页](assets/screenshot-settings.png)
+
+---
+
+## �🚀 快速开始
 
 1. 安装完成后, 在 VS Code / Windsurf 左侧活动栏找到 **WF-Swap** 图标点击打开
 2. 点顶栏 **+** 导入你的账号
