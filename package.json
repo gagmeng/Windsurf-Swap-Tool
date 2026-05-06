@@ -1,0 +1,219 @@
+{
+  "name": "wf-switcher",
+  "displayName": "WF-Swap",
+  "description": "Windsurf 多账号管理与自动切换工具 - 安全直连版",
+  "version": "1.2.8",
+  "publisher": "Ti",
+  "author": "Ti",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "*"
+  ],
+  "main": "./dist/extension.js",
+  "icon": "media/marketplace.png",
+  "extensionKind": [
+    "workspace",
+    "ui"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "wfSwitcher.show",
+        "title": "WF-Swap: 打开控制面板"
+      },
+      {
+        "command": "wfSwitcher.refreshAllBalances",
+        "title": "WF-Swap: 刷新所有余额",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "wfSwitcher.importAccounts",
+        "title": "WF-Swap: 导入账号",
+        "icon": "$(add)"
+      },
+      {
+        "command": "wfSwitcher.quickSwitch",
+        "title": "WF-Swap: 快速切换账号",
+        "icon": "$(account)"
+      },
+      {
+        "command": "wfSwitcher.switchNext",
+        "title": "WF-Swap: 切换到下一个账号"
+      },
+      {
+        "command": "wfSwitcher.exportAccounts",
+        "title": "WF-Swap: 导出账号"
+      },
+      {
+        "command": "wfSwitcher.clearAccounts",
+        "title": "WF-Swap: 清空所有账号"
+      },
+      {
+        "command": "wfSwitcher.applyPatch",
+        "title": "WF-Swap: 应用补丁",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "wfSwitcher.restorePatch",
+        "title": "WF-Swap: 恢复补丁"
+      },
+      {
+        "command": "wfSwitcher.resetMachineId",
+        "title": "WF-Swap: 重置机器码"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "wfSwitcher.show",
+        "key": "ctrl+shift+w",
+        "mac": "cmd+shift+w"
+      },
+      {
+        "command": "wfSwitcher.quickSwitch",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a",
+        "when": "!terminalFocus"
+      },
+      {
+        "command": "wfSwitcher.switchNext",
+        "key": "ctrl+shift+n",
+        "mac": "cmd+shift+n",
+        "when": "!terminalFocus"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "wf-switcher",
+          "title": "WF-Swap",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "wf-switcher": [
+        {
+          "type": "webview",
+          "id": "wfSwitcher.panel",
+          "name": "WF-Swap",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "WF-Swap",
+      "properties": {
+        "wfSwitcher.autoSwitchEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "配额耗尽自动切换"
+        },
+        "wfSwitcher.autoSwitchSilent": {
+          "type": "boolean",
+          "default": false,
+          "description": "静默切换（不弹确认框）"
+        },
+        "wfSwitcher.autoSwitchThreshold": {
+          "type": "number",
+          "default": 5,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "日配额切换阈值（%）"
+        },
+        "wfSwitcher.autoResetMachineIdOnAutoSwitch": {
+          "type": "boolean",
+          "default": false,
+          "description": "自动切号成功后静默重置机器码/指纹 (5分钟冷却, 重启 Windsurf 后对新请求生效)"
+        },
+        "wfSwitcher.statusBarEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "显示底部状态栏"
+        },
+        "wfSwitcher.balanceAutoRefresh": {
+          "type": "boolean",
+          "default": true,
+          "description": "当前账号余额自动刷新"
+        },
+        "wfSwitcher.balanceRefreshInterval": {
+          "type": "number",
+          "default": 30,
+          "minimum": 10,
+          "maximum": 600,
+          "description": "当前账号余额刷新间隔（秒）"
+        },
+        "wfSwitcher.proxyUrl": {
+          "type": "string",
+          "default": "",
+          "description": "本地代理地址 (留空自动检测)。例: socks5://127.0.0.1:10808 或 http://127.0.0.1:7890"
+        },
+        "wfSwitcher.cfProxyUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Cloudflare Worker 代理地址 (国内用户必填，绕过 GFW 访问 Firebase)。例: https://wf-proxy.你的子域.workers.dev"
+        },
+        "wfSwitcher.concurrentLimit": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "批量刷新 / 登录的并发上限 (推荐 5、10+ 可能触发 Firebase 429 限流)"
+        },
+        "wfSwitcher.unlimitedConcurrent": {
+          "type": "boolean",
+          "default": false,
+          "description": "无限并发 (激进模式，忽略上述并发上限。100+ 账号同时请求有被限流风险)"
+        },
+        "wfSwitcher.switchMode": {
+          "type": "string",
+          "enum": [
+            "patch",
+            "uri"
+          ],
+          "enumDescriptions": [
+            "补丁模式 (推荐): 通过注入自定义命令 handleAuthTokenWithShit 无感切号",
+            "URI 模式 (兜底): 通过 windsurf:// 协议回调切号, 核心补丁失效时可用"
+          ],
+          "default": "patch",
+          "description": "切号模式。补丁模式最快最稳, URI 模式作为 Windsurf 版本升级干掉核心补丁时的兜底"
+        },
+        "wfSwitcher.uriPatchEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "启用 URI 补丁 (switchMode=uri 时自动启用; 平时打开可作为双重保险)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "webpack": "webpack --mode production",
+    "webpack-dev": "webpack --mode development",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "axios": "^1.13.2",
+    "https-proxy-agent": "^9.0.0",
+    "socks-proxy-agent": "^10.0.0",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/uuid": "^10.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.24.0",
+    "javascript-obfuscator": "^5.4.1",
+    "sharp": "^0.34.5",
+    "ts-loader": "^9.5.4",
+    "typescript": "^5.6.0",
+    "webpack": "^5.103.0",
+    "webpack-cli": "^6.0.1",
+    "webpack-obfuscator": "^3.6.1"
+  }
+}

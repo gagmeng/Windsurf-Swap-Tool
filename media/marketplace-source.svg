@@ -1,0 +1,62 @@
+<!--
+  WF-Swap 市场图标源 (128x128)
+  仅开发态使用, scripts/generate-icons.js 会将其导出为 media/marketplace.png
+  不会被打进 .vsix (.vscodeignore 已排除)
+  开发者: Ti
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <!-- 深色斜向渐变背景: 从深蓝黑到稍浅蓝灰 -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0B1424"/>
+      <stop offset="50%" stop-color="#10203A"/>
+      <stop offset="100%" stop-color="#1A2E52"/>
+    </linearGradient>
+    <!-- 字母渐变: 青色到品牌蓝 -->
+    <linearGradient id="txtGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#22E0FF"/>
+      <stop offset="60%" stop-color="#4B9EFF"/>
+      <stop offset="100%" stop-color="#5C6FFF"/>
+    </linearGradient>
+    <!-- 外发光效果 -->
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2"/>
+      <feComponentTransfer>
+        <feFuncA type="linear" slope="1.2"/>
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- 圆角方形背景 -->
+  <rect x="0" y="0" width="128" height="128" rx="26" ry="26" fill="url(#bgGrad)"/>
+
+  <!-- 细微高光边框 (内阴影感) -->
+  <rect x="0.5" y="0.5" width="127" height="127" rx="25.5" ry="25.5"
+        fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+
+  <!-- 顶部高光弧 -->
+  <path d="M 14 6 Q 64 2 114 6" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+
+  <!-- "Ti" 主字 (带发光) -->
+  <g filter="url(#glow)" fill="url(#txtGrad)">
+    <!-- T 的横 -->
+    <rect x="18" y="32" width="44" height="11" rx="2.5"/>
+    <!-- T 的竖 -->
+    <rect x="34" y="32" width="12" height="64" rx="2.5"/>
+    <!-- i 的点 -->
+    <circle cx="85" cy="38" r="6.5"/>
+    <!-- i 的竖 -->
+    <rect x="79" y="52" width="12" height="44" rx="2.5"/>
+  </g>
+
+  <!-- 底部装饰文字 (版本标识, 可选) -->
+  <text x="64" y="112" text-anchor="middle"
+        font-family="ui-monospace, Consolas, monospace" font-size="9" font-weight="600"
+        fill="rgba(180,210,255,0.35)" letter-spacing="2">
+    WF-SWAP
+  </text>
+</svg>

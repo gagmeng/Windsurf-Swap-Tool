@@ -1,0 +1,44 @@
+# === 发布包白名单策略 ===
+# 默认先排除 dist/ 下的所有文件, 再用 !dist/extension.js 反向保留唯一 bundle
+# 这样无论 tsc/webpack 生成什么副产品, 都不会污染最终 .vsix
+dist/**
+!dist/extension.js
+
+# === 源码 / 类型定义 / 编辑器配置 ===
+src/**
+out/**
+scripts/**
+*.ts
+!*.d.ts
+tsconfig.json
+tsconfig.*.json
+webpack.config.js
+.vscode/**
+.vscode-test/**
+.gitignore
+.eslintrc*
+.prettierrc*
+.editorconfig
+
+# === 图标源文件 (只打包最终 PNG, 不打包 svg 源和 Retina 大图) ===
+media/marketplace-source.svg
+media/marketplace@2x.png
+
+# === 测试 / 临时文件 ===
+test/**
+**/*.test.*
+temp_*.js
+tmp-*.js
+tmp-*/**
+test-*.js
+*.vsix
+progress.txt
+**/*.map
+
+# === 依赖 / 子项目 ===
+node_modules/**
+cf-proxy-worker/**
+.git/**
+.github/**
+docs/**
+
