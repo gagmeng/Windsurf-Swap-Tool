@@ -148,8 +148,9 @@ export class ViewProvider implements vscode.WebviewViewProvider {
           log('warn', TAG, `标记账号 ${email} 已被 ${conflict.label} 占用, 重新选择`);
           const config = vscode.workspace.getConfiguration('wfSwitcher');
           const threshold = config.get<number>('autoSwitchThreshold', 5);
+          const planType = config.get<string>('autoSwitchPlanType', 'All');
           const lockedEmails = this.instanceManager.getOtherLockedEmails();
-          const next = this.accountManager.getNextAvailableAccount(threshold, lockedEmails);
+          const next = this.accountManager.getNextAvailableAccount(threshold, lockedEmails, planType);
           if (!next) {
             log('warn', TAG, '没有其他可用账号, 放弃自动切号');
             vscode.window.showWarningMessage('所有账号均已被其他分身占用，无法自动切号');
@@ -211,6 +212,15 @@ export class ViewProvider implements vscode.WebviewViewProvider {
       case 'importAccounts':
         await this.handleImportAccounts(
           message.payload?.text,
+          message.payload?.groupId
+        );
+        break;
+
+      case 'serverImport':
+        await this.handleServerImport(
+          message.payload?.baseUrl,
+          message.payload?.planType,
+          message.payload?.credType,
           message.payload?.groupId
         );
         break;
@@ -350,6 +360,7 @@ export class ViewProvider implements vscode.WebviewViewProvider {
           autoSwitchEnabled: config.get('autoSwitchEnabled', false),
           autoSwitchSilent: config.get('autoSwitchSilent', false),
           autoSwitchThreshold: config.get('autoSwitchThreshold', 5),
+          autoSwitchPlanType: config.get('autoSwitchPlanType', 'All'),
           autoResetMachineIdOnAutoSwitch: config.get('autoResetMachineIdOnAutoSwitch', false),
           statusBarEnabled: config.get('statusBarEnabled', true),
           balanceAutoRefresh: config.get('balanceAutoRefresh', true),
@@ -511,9 +522,10 @@ export class ViewProvider implements vscode.WebviewViewProvider {
 
       /* 写入自动切号标记: 新实例启动后自动切到下一个可用账号 */
       const otherLocked = this.instanceManager.getOtherLockedEmails();
-      const threshold = vscode.workspace.getConfiguration('wfSwitcher')
-        .get<number>('autoSwitchThreshold', 5);
-      const nextAccount = this.accountManager.getNextAvailableAccount(threshold, otherLocked);
+      const cfgForSwitch = vscode.workspace.getConfiguration('wfSwitcher');
+      const threshold = cfgForSwitch.get<number>('autoSwitchThreshold', 5);
+      const planType = cfgForSwitch.get<string>('autoSwitchPlanType', 'All');
+      const nextAccount = this.accountManager.getNextAvailableAccount(threshold, otherLocked, planType);
       if (nextAccount) {
         const markerPath = path.join(profileDir, '.auto-switch-pending');
         fs.writeFileSync(markerPath, JSON.stringify({
@@ -696,6 +708,103 @@ export class ViewProvider implements vscode.WebviewViewProvider {
         /* 混合 (部分重复 + 部分格式错), 一并报告 */
         vscode.window.showWarningMessage(`${failed} 条格式无效, ${duplicates} 个已存在, 0 个新增`);
       }
+    }
+  }
+
+  /**
+   * 服务端导入: 从外部 API 拉取账号列表, 按选定导入方式转为批量文本, 再走 handleImportAccounts
+   */
+  private async handleServerImport(
+    baseUrl?: string,
+    planType?: string,
+    credType?: string,
+    groupId?: string
+  ): Promise<void> {
+    if (!baseUrl) {
+      this.postMessage({ type: 'hideLoading' });
+      return;
+    }
+
+    try {
+      /* 构造请求 URL */
+      let url = `${baseUrl}/accounts?page=1&page_size=10000`;
+      if (planType && planType !== 'All') {
+        url += `&plan_names=${encodeURIComponent(planType)}`;
+      }
+
+      log('info', TAG, `服务端导入: GET ${url}`);
+      const http = await import('http');
+      const https = await import('https');
+      const { URL: NodeURL } = await import('url');
+
+      const parsedUrl = new NodeURL(url);
+      const client = parsedUrl.protocol === 'https:' ? https : http;
+
+      const body: string = await new Promise((resolve, reject) => {
+        const req = client.get(url, (res: any) => {
+          let data = '';
+          res.on('data', (chunk: any) => { data += chunk; });
+          res.on('end', () => {
+            if (res.statusCode && res.statusCode >= 400) {
+              reject(new Error(`HTTP ${res.statusCode}: ${data.substring(0, 200)}`));
+            } else {
+              resolve(data);
+            }
+          });
+        });
+        req.on('error', (e: any) => reject(e));
+        req.setTimeout(15000, () => { req.destroy(); reject(new Error('请求超时 (15s)')); });
+      });
+
+      const json = JSON.parse(body);
+      const accounts: any[] = json.accounts || [];
+
+      if (accounts.length === 0) {
+        this.postMessage({ type: 'hideLoading' });
+        vscode.window.showWarningMessage('服务端未返回任何账号');
+        return;
+      }
+
+      /* 根据 credType 将 API 返回的账号转为批量导入文本行 */
+      const lines: string[] = [];
+      let skipped = 0;
+      for (const acc of accounts) {
+        const email = (acc.email || '').trim();
+        if (!email) { skipped++; continue; }
+
+        let cred = '';
+        if (credType === 'password') {
+          cred = acc.password || '';
+        } else if (credType === 'refresh') {
+          const rt = acc.refresh_token || '';
+          cred = rt ? `rt:${rt}` : '';
+        } else {
+          /* 默认 auth1 */
+          const auth1 = acc.devin_auth1_token || '';
+          cred = auth1 ? `auth1:${auth1}` : '';
+        }
+
+        if (!cred) { skipped++; continue; }
+        lines.push(`${email};${cred}`);
+      }
+
+      if (lines.length === 0) {
+        this.postMessage({ type: 'hideLoading' });
+        vscode.window.showWarningMessage(
+          `获取到 ${accounts.length} 个账号, 但选定导入方式的凭据字段全部为空 (跳过 ${skipped} 个)`
+        );
+        return;
+      }
+
+      log('info', TAG, `服务端导入: 获取 ${accounts.length} 个账号, 有效 ${lines.length} 条, 跳过 ${skipped} 条`);
+      this.postMessage({ type: 'setLoadingText', payload: { text: `获取到 ${lines.length} 个账号, 正在导入...` } });
+
+      /* 复用批量导入流程 */
+      await this.handleImportAccounts(lines.join('\n'), groupId);
+    } catch (err: any) {
+      log('error', TAG, `服务端导入失败: ${err.message}`);
+      this.postMessage({ type: 'hideLoading' });
+      vscode.window.showErrorMessage(`服务端导入失败: ${err.message}`);
     }
   }
 
@@ -1635,7 +1744,8 @@ export class ViewProvider implements vscode.WebviewViewProvider {
 
   /** 切换到下一个账号 */
   async switchNext(): Promise<void> {
-    const next = this.accountManager.getNextAvailableAccount(0);
+    const planType = vscode.workspace.getConfiguration('wfSwitcher').get<string>('autoSwitchPlanType', 'All');
+    const next = this.accountManager.getNextAvailableAccount(0, undefined, planType);
     if (next) {
       await this.doSwitchAccount(next.id);
     } else {

@@ -93,6 +93,7 @@ export function getWebviewContent(
           <div class="import-tabs">
             <button class="import-tab active" data-mode="batch">批量导入</button>
             <button class="import-tab" data-mode="token">Token 导入</button>
+            <button class="import-tab" data-mode="server">服务端导入</button>
           </div>
 
           <!-- Tab1: 批量导入 (凭据类型自动识别) -->
@@ -116,6 +117,33 @@ export function getWebviewContent(
             <div class="form-row">
               <label class="form-label">Token</label>
               <textarea id="tokenValue" class="input-field" rows="4" placeholder="auth1_xxxxxxxxxxxx... 或 Firebase refresh_token" style="font-family:monospace;font-size:11px"></textarea>
+            </div>
+          </div>
+
+          <!-- Tab3: 服务端导入 -->
+          <div class="import-tab-content" id="importTab-server" style="display:none">
+            <div class="form-row">
+              <label class="form-label">套餐类型</label>
+              <select id="serverPlanType" class="input-field">
+                <option value="All">全部</option>
+                <option value="Free">免费</option>
+                <option value="Trial">试用</option>
+                <option value="Pro">专业</option>
+                <option value="Team">团队</option>
+                <option value="Enterprise">旗舰</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label class="form-label">导入方式</label>
+              <select id="serverCredType" class="input-field">
+                <option value="auth1">邮箱+Auth1 Token</option>
+                <option value="password">邮箱+密码</option>
+                <option value="refresh">邮箱+Refresh Token</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label class="form-label">API 地址</label>
+              <input type="text" id="serverBaseUrl" class="input-field" value="http://127.0.0.1:46953/api/v1" placeholder="http://127.0.0.1:46953/api/v1" />
             </div>
           </div>
 
@@ -226,6 +254,50 @@ export function getWebviewContent(
       <div class="search-bar">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         <input type="text" id="searchInput" placeholder="搜索账号..." />
+        <button class="filter-toggle-btn" id="filterToggleBtn" title="筛选">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+        </button>
+      </div>
+      <!-- 筛选面板 (默认隐藏) -->
+      <div class="filter-panel" id="filterPanel" style="display:none">
+        <div class="filter-panel-row">
+          <label class="filter-label">套餐类型</label>
+          <select class="filter-select" id="filterPlan">
+            <option value="">全部</option>
+              <option value="Free">免费</option>
+              <option value="Trial">试用</option>
+              <option value="Pro">专业</option>
+              <option value="Team">团队</option>
+              <option value="Enterprise">旗舰</option>
+          </select>
+        </div>
+        <div class="filter-panel-row">
+          <label class="filter-label">到期时间</label>
+          <select class="filter-select" id="filterExpiry">
+            <option value="">全部</option>
+            <option value="3">3天内到期</option>
+            <option value="7">7天内到期</option>
+            <option value="30">30天内到期</option>
+            <option value="expired">已过期</option>
+            <option value="noexpiry">永不过期/未知</option>
+          </select>
+        </div>
+        <div class="filter-panel-row">
+          <label class="filter-label">创建时间</label>
+          <select class="filter-select" id="filterCreated">
+            <option value="">全部</option>
+            <option value="1">最近1天</option>
+            <option value="7">最近7天</option>
+            <option value="30">最近30天</option>
+          </select>
+        </div>
+        <div class="filter-panel-row">
+          <label class="filter-label">邮箱后缀</label>
+          <input type="text" class="filter-input" id="filterSuffix" placeholder="如 gmail.com" />
+        </div>
+        <div class="filter-panel-actions">
+          <button class="filter-reset-btn" id="filterResetBtn">重置</button>
+        </div>
       </div>
       <!-- 批量操作工具栏（仅在有选中账号时显示） -->
       <div class="bulk-bar" id="bulkBar" style="display:none">
@@ -375,6 +447,22 @@ export function getWebviewContent(
             <div class="setting-desc">自动切号成功后静默重置机器码/指纹 (5分钟冷却)</div>
           </div>
           <label class="toggle"><input type="checkbox" id="settAutoResetMachineId"><span class="slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-name">切换订阅类型</div>
+            <div class="setting-desc">仅在选定订阅类型的账号间自动切换 (全部 = 不限制)</div>
+          </div>
+          <div class="setting-control">
+            <select class="setting-select" id="settAutoSwitchPlanType">
+              <option value="All">全部</option>
+              <option value="Free">免费</option>
+              <option value="Trial">试用</option>
+              <option value="Pro">专业</option>
+              <option value="Team">团队</option>
+              <option value="Enterprise">旗舰</option>
+            </select>
+          </div>
         </div>
       </div>
       <div class="setting-group">
@@ -609,6 +697,70 @@ function getStyles(): string {
       font-family: inherit;
     }
     .search-bar input::placeholder { color: var(--text-muted); }
+
+    /* 筛选按钮 */
+    .filter-toggle-btn {
+      display: flex; align-items: center; justify-content: center;
+      width: 26px; height: 26px; border: none; border-radius: var(--radius-sm);
+      background: transparent; color: var(--text-muted); cursor: pointer;
+      flex-shrink: 0; transition: color 0.15s, background 0.15s;
+    }
+    .filter-toggle-btn:hover { color: var(--accent); background: rgba(0,122,255,0.08); }
+    .filter-toggle-btn.active { color: var(--accent); }
+
+    /* 筛选面板 */
+    .filter-panel {
+      margin-bottom: 8px; padding: 10px 12px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      animation: filterSlide 0.15s ease;
+    }
+    @keyframes filterSlide { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+    .filter-panel-row {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 8px;
+    }
+    .filter-panel-row:last-child { margin-bottom: 0; }
+    .filter-label {
+      font-size: 11px; color: var(--text-secondary);
+      min-width: 52px; flex-shrink: 0;
+    }
+    .filter-select {
+      flex: 1; padding: 4px 22px 4px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+      background: var(--bg-card); color: var(--text-primary);
+      font-size: 11px; cursor: pointer; outline: none;
+      appearance: none; -webkit-appearance: none;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><polyline points='1,1 5,5 9,1' stroke='%23888' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+      background-repeat: no-repeat; background-position: right 6px center;
+    }
+    .filter-select:hover, .filter-select:focus { border-color: var(--accent); }
+    .filter-input {
+      flex: 1; padding: 4px 8px;
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      background: var(--bg-card); color: var(--text-primary);
+      font-size: 11px; outline: none; font-family: inherit;
+    }
+    .filter-input::placeholder { color: var(--text-muted); }
+    .filter-input:focus { border-color: var(--accent); }
+    .filter-panel-actions {
+      display: flex; justify-content: flex-end; margin-top: 8px; padding-top: 6px;
+      border-top: 1px solid var(--border);
+    }
+    .filter-reset-btn {
+      padding: 3px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+      background: transparent; color: var(--text-secondary);
+      font-size: 11px; cursor: pointer; transition: all 0.15s;
+    }
+    .filter-reset-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .setting-select {
+      padding: 4px 26px 4px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+      background: var(--bg-card); color: var(--text-primary);
+      font-size: 12px; cursor: pointer; outline: none;
+      appearance: none; -webkit-appearance: none;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><polyline points='1,1 5,5 9,1' stroke='%23888' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+      background-repeat: no-repeat; background-position: right 6px center;
+    }
+    .setting-select:hover, .setting-select:focus { border-color: var(--accent); }
 
     /* 账号列表 */
     .account-list { display: flex; flex-direction: column; gap: 2px; }
@@ -1303,10 +1455,10 @@ function getScript(): string {
         switch (msg.type) {
           case 'stateUpdate': {
             state = msg.payload;
-            renderAll();
-            /* 首次 state 到达, 隐藏启动占位 */
+            /* 首次 state 到达, 先隐藏启动占位 (避免 renderAll 异常导致永久白屏) */
             const __bo = document.getElementById('bootOverlay');
             if (__bo) { __bo.style.display = 'none'; }
+            try { renderAll(); } catch (e) { console.error('[WF-Swap] renderAll error:', e); }
             break;
           }
           case 'switchStart':
@@ -1367,6 +1519,12 @@ function getScript(): string {
             } else {
               hideLoading();
             }
+            break;
+          case 'hideLoading':
+            hideLoading();
+            break;
+          case 'setLoadingText':
+            if (msg.payload && msg.payload.text) { setLoadingText(msg.payload.text); }
             break;
           case 'patchStatusUpdate':
             /* 延迟加载的补丁状态更新 (含 switchMode / processCount / uriPatchApplied) */
@@ -1534,6 +1692,58 @@ function getScript(): string {
         close: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'
       };
 
+      /** 获取当前所有筛选条件过滤后的账号列表 (搜索 + Plan + 到期 + 创建时间 + 邮箱后缀) */
+      function getFilteredAccounts() {
+        const searchText = (document.getElementById('searchInput')?.value || '').toLowerCase();
+        const filterPlan = (document.getElementById('filterPlan')?.value || '');
+        const filterExpiry = (document.getElementById('filterExpiry')?.value || '');
+        const filterCreated = (document.getElementById('filterCreated')?.value || '');
+        const filterSuffix = (document.getElementById('filterSuffix')?.value || '').toLowerCase().trim();
+        const nowSec = Math.floor(Date.now() / 1000);
+
+        return (state.accounts || []).filter(a => {
+          if (searchText && !a.email.toLowerCase().includes(searchText)) { return false; }
+          if (filterPlan) {
+            const plan = (a.planName || '').toLowerCase();
+            if (plan !== filterPlan.toLowerCase()) { return false; }
+          }
+          if (filterExpiry) {
+            if (filterExpiry === 'expired') {
+              if (!a.planEndAt || a.planEndAt >= nowSec) { return false; }
+            } else if (filterExpiry === 'noexpiry') {
+              if (a.planEndAt) { return false; }
+            } else {
+              const days = parseInt(filterExpiry);
+              if (!a.planEndAt) { return false; }
+              const remainDays = (a.planEndAt - nowSec) / 86400;
+              if (remainDays < 0 || remainDays > days) { return false; }
+            }
+          }
+          if (filterCreated) {
+            const days = parseInt(filterCreated);
+            if (!a.createdAt) { return false; }
+            const ageDays = (nowSec - a.createdAt) / 86400;
+            if (ageDays > days) { return false; }
+          }
+          if (filterSuffix) {
+            const atIdx = a.email.indexOf('@');
+            const domain = atIdx >= 0 ? a.email.substring(atIdx + 1).toLowerCase() : '';
+            if (!domain.includes(filterSuffix)) { return false; }
+          }
+          return true;
+        });
+      }
+
+      /** 检查当前是否有任何筛选条件处于激活状态 */
+      function hasActiveFilter() {
+        const searchText = (document.getElementById('searchInput')?.value || '');
+        const filterPlan = (document.getElementById('filterPlan')?.value || '');
+        const filterExpiry = (document.getElementById('filterExpiry')?.value || '');
+        const filterCreated = (document.getElementById('filterCreated')?.value || '');
+        const filterSuffix = (document.getElementById('filterSuffix')?.value || '').trim();
+        return searchText.length > 0 || !!filterPlan || !!filterExpiry || !!filterCreated || !!filterSuffix;
+      }
+
       /**
        * 渲染账号卡片列表
        * 结构: 按分组永久分节; 每个 section 内有自己的分页条
@@ -1541,10 +1751,7 @@ function getScript(): string {
        */
       function renderAccountList() {
         const list = document.getElementById('accountList');
-        const searchText = (document.getElementById('searchInput').value || '').toLowerCase();
-        const filtered = state.accounts.filter(a =>
-          a.email.toLowerCase().includes(searchText)
-        );
+        const filtered = getFilteredAccounts();
 
         if (filtered.length === 0) {
           list.innerHTML = '<div class="empty-state">'
@@ -1554,10 +1761,9 @@ function getScript(): string {
         }
 
         /* 永远按分组分节: 默认分组在最前, 再按 state.groups 顺序
-         * 传入 hasSearch 让空分组在搜索时仍被过滤, 非搜索场景下保留展示
+         * 传入 hasFilter 让空分组在筛选时仍被过滤, 非筛选场景下保留展示
          * (这样用户新建的空分组也能在 UI 上看到, 否则会感觉"创建不了") */
-        const hasSearch = searchText.length > 0;
-        list.innerHTML = renderGroupedSections(filtered, hasSearch);
+        list.innerHTML = renderGroupedSections(filtered, hasActiveFilter());
 
         /* 绑定所有事件 (折叠 / 分组操作 / 账号操作 / 分页) */
         bindSectionHeaderToggle(list);
@@ -1604,7 +1810,6 @@ function getScript(): string {
        * 搜索过滤场景: 只针对"当前过滤后能见到"的同组账号操作, 不会动到被过滤掉的
        */
       function bindGroupSelectAll(list) {
-        const searchText = (document.getElementById('searchInput').value || '').toLowerCase();
         list.querySelectorAll('.group-checkbox').forEach(el => {
           /* 同步 indeterminate 视觉 */
           if (el.dataset.state === 'partial') { el.indeterminate = true; }
@@ -1615,11 +1820,11 @@ function getScript(): string {
           el.addEventListener('change', (e) => {
             e.stopPropagation();
             const gid = el.dataset.gid;
-            /* 取出当前分组 + 当前搜索范围 内的所有账号 */
-            const groupItems = (state.accounts || []).filter(a => {
+            /* 取出当前分组 + 当前筛选范围 内的所有账号 */
+            const allFiltered = getFilteredAccounts();
+            const groupItems = allFiltered.filter(a => {
               const inGroup = gid === 'none' ? !a.groupId : a.groupId === gid;
-              const inSearch = a.email.toLowerCase().includes(searchText);
-              return inGroup && inSearch;
+              return inGroup;
             });
             if (groupItems.length === 0) { return; }
 
@@ -2231,6 +2436,7 @@ function getScript(): string {
         setChecked('settAutoSwitch', s.autoSwitchEnabled);
         setChecked('settSilent', s.autoSwitchSilent);
         setChecked('settAutoResetMachineId', s.autoResetMachineIdOnAutoSwitch);
+        setValue('settAutoSwitchPlanType', s.autoSwitchPlanType || 'All');
         setChecked('settAutoRefresh', s.balanceAutoRefresh);
         setChecked('settStatusBar', s.statusBarEnabled);
         setValue('settThreshold', s.autoSwitchThreshold);
@@ -2276,6 +2482,60 @@ function getScript(): string {
         viewState.currentPage = {};
         renderAccountList();
       });
+
+      /* 筛选面板切换按钮 */
+      document.getElementById('filterToggleBtn')?.addEventListener('click', () => {
+        const panel = document.getElementById('filterPanel');
+        const btn = document.getElementById('filterToggleBtn');
+        if (!panel || !btn) { return; }
+        const visible = panel.style.display !== 'none';
+        panel.style.display = visible ? 'none' : 'block';
+        btn.classList.toggle('active', !visible);
+      });
+
+      /* 筛选控件 (Plan 类型 / 到期时间 / 创建时间 / 邮箱后缀) */
+      document.getElementById('filterPlan')?.addEventListener('change', () => {
+        viewState.currentPage = {};
+        renderAccountList();
+        syncFilterBtnState();
+      });
+      document.getElementById('filterExpiry')?.addEventListener('change', () => {
+        viewState.currentPage = {};
+        renderAccountList();
+        syncFilterBtnState();
+      });
+      document.getElementById('filterCreated')?.addEventListener('change', () => {
+        viewState.currentPage = {};
+        renderAccountList();
+        syncFilterBtnState();
+      });
+      document.getElementById('filterSuffix')?.addEventListener('input', () => {
+        viewState.currentPage = {};
+        renderAccountList();
+        syncFilterBtnState();
+      });
+
+      /* 重置筛选 */
+      document.getElementById('filterResetBtn')?.addEventListener('click', () => {
+        const fp = document.getElementById('filterPlan'); if (fp) { fp.value = ''; }
+        const fe = document.getElementById('filterExpiry'); if (fe) { fe.value = ''; }
+        const fc = document.getElementById('filterCreated'); if (fc) { fc.value = ''; }
+        const fs = document.getElementById('filterSuffix'); if (fs) { fs.value = ''; }
+        viewState.currentPage = {};
+        renderAccountList();
+        syncFilterBtnState();
+      });
+
+      /** 同步筛选按钮高亮状态 (有任何筛选条件激活时高亮) */
+      function syncFilterBtnState() {
+        const btn = document.getElementById('filterToggleBtn');
+        const filterPlan = (document.getElementById('filterPlan')?.value || '');
+        const filterExpiry = (document.getElementById('filterExpiry')?.value || '');
+        const filterCreated = (document.getElementById('filterCreated')?.value || '');
+        const filterSuffix = (document.getElementById('filterSuffix')?.value || '').trim();
+        const hasFilter = !!filterPlan || !!filterExpiry || !!filterCreated || !!filterSuffix;
+        if (btn) { btn.classList.toggle('active', hasFilter); }
+      }
 
       /* 顶栏按钮 */
       document.getElementById('btnRefreshAll').addEventListener('click', () => send('refreshAllBalances'));
@@ -2337,7 +2597,7 @@ function getScript(): string {
 
       /**
        * 切换导入 Tab
-       * @param {string} mode - 'batch' | 'token'
+       * @param {string} mode - 'batch' | 'token' | 'server'
        */
       function switchImportTab(mode) {
         document.querySelectorAll('.import-tab').forEach(el => {
@@ -2345,11 +2605,14 @@ function getScript(): string {
         });
         document.getElementById('importTab-batch').style.display = mode === 'batch' ? '' : 'none';
         document.getElementById('importTab-token').style.display = mode === 'token' ? '' : 'none';
+        document.getElementById('importTab-server').style.display = mode === 'server' ? '' : 'none';
         /* 焦点跳到当前 tab 的首个输入框 */
         if (mode === 'batch') {
           document.getElementById('importText').focus();
-        } else {
+        } else if (mode === 'token') {
           document.getElementById('tokenEmail').focus();
+        } else if (mode === 'server') {
+          document.getElementById('serverBaseUrl').focus();
         }
       }
 
@@ -2357,6 +2620,21 @@ function getScript(): string {
         const groupId = document.getElementById('importGroupSelect').value || '';
         /* 判断当前激活的 tab */
         const activeTab = document.querySelector('.import-tab.active').dataset.mode;
+
+        if (activeTab === 'server') {
+          /* 服务端导入: 先从 API 拉取账号再转为批量导入文本 */
+          const baseUrl = (document.getElementById('serverBaseUrl').value || '').trim().replace(new RegExp('[/]+$'), '');
+          const planType = document.getElementById('serverPlanType').value;
+          const credType = document.getElementById('serverCredType').value;
+          if (!baseUrl) {
+            vscode.postMessage({ type: 'showError', payload: { message: '请填写 API 地址' } });
+            return;
+          }
+          send('serverImport', { baseUrl, planType, credType, groupId });
+          showLoading('正在从服务端获取账号...');
+          closeImport();
+          return;
+        }
 
         let text = '';
         if (activeTab === 'batch') {
@@ -2485,9 +2763,8 @@ function getScript(): string {
       /* ---------- 批量操作 ---------- */
       /** 全选当前视图下已渲染的账号 */
       document.getElementById('bulkSelectAll').addEventListener('click', () => {
-        /* 全选 = 选中当前搜索过滤后跨分组的所有账号 */
-        const searchText = (document.getElementById('searchInput').value || '').toLowerCase();
-        const filtered = state.accounts.filter(a => a.email.toLowerCase().includes(searchText));
+        /* 全选 = 选中当前筛选后跨分组的所有账号 */
+        const filtered = getFilteredAccounts();
         for (const a of filtered) { viewState.selectedIds[a.id] = true; }
         renderAccountList();
         renderBulkBar();
@@ -2680,6 +2957,11 @@ function getScript(): string {
         if (v > 20) { v = 20; }
         e.target.value = v;
         send('updateSettings', { concurrentLimit: v });
+      });
+
+      /* 自动切换订阅类型下拉 */
+      document.getElementById('settAutoSwitchPlanType')?.addEventListener('change', (e) => {
+        send('updateSettings', { autoSwitchPlanType: e.target.value });
       });
 
       /* ---------- 工具函数 ---------- */

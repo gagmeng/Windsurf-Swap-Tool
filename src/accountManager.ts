@@ -223,7 +223,7 @@ export class AccountManager {
    *
    * @param threshold - 日配额阈值 (百分比)，低于此视为不够用
    */
-  getNextAvailableAccount(threshold: number = 5, excludeEmails?: Set<string>): AccountInfo | undefined {
+  getNextAvailableAccount(threshold: number = 5, excludeEmails?: Set<string>, planType?: string): AccountInfo | undefined {
     const activeId = this.context.globalState.get<string>(ACTIVE_KEY);
     const nowSec = Math.floor(Date.now() / 1000);
 
@@ -232,6 +232,10 @@ export class AccountManager {
       if (a.id === activeId) { return false; }
       /* 排除被其他分身占用的账号 */
       if (excludeEmails && a.email && excludeEmails.has(a.email.toLowerCase())) { return false; }
+      /* 按订阅类型过滤 (All 或空 = 不限制) */
+      if (planType && planType !== 'All' && a.planName) {
+        if (a.planName.toLowerCase() !== planType.toLowerCase()) { return false; }
+      }
       /* 已过期的套餐不考虑 (planEndAt 是 unix 秒) */
       if (a.planEndAt && a.planEndAt < nowSec) { return false; }
       /* 周配额已耗尽 → 本周完全不可用 */

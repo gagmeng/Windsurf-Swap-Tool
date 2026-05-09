@@ -50,6 +50,7 @@ export class AutoSwitch {
     const enabled = config.get<boolean>('autoSwitchEnabled', false);
     const silent = config.get<boolean>('autoSwitchSilent', false);
     const threshold = config.get<number>('autoSwitchThreshold', 5);
+    const planType = config.get<string>('autoSwitchPlanType', 'All');
 
     if (!enabled) {
       return;
@@ -66,8 +67,8 @@ export class AutoSwitch {
       (weeklyExhausted ? ' (周配额已耗尽!)' : `, 日阈值 ${threshold}%`)
     );
 
-    /* 找下一个可用账号 */
-    const nextAccount = this.accountManager.getNextAvailableAccount(threshold);
+    /* 找下一个可用账号 (按订阅类型过滤) */
+    const nextAccount = this.accountManager.getNextAvailableAccount(threshold, undefined, planType);
     if (!nextAccount) {
       log('warn', TAG, '没有可用的账号可切换');
       vscode.window.showWarningMessage('所有账号配额均已不足，无法自动切换');

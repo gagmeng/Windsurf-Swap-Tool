@@ -2,7 +2,7 @@
   "name": "wf-switcher",
   "displayName": "WF-Swap",
   "description": "Windsurf 多账号管理与自动切换工具 - 安全直连版",
-  "version": "1.2.8",
+  "version": "1.2.9",
   "publisher": "Ti",
   "author": "Ti",
   "repository": {
@@ -128,6 +128,18 @@
           "minimum": 0,
           "maximum": 100,
           "description": "日配额切换阈值（%）"
+        },
+        "wfSwitcher.autoSwitchPlanType": {
+          "type": "string",
+          "enum": [
+            "All",
+            "Trial",
+            "Pro",
+            "Team",
+            "Enterprise"
+          ],
+          "default": "All",
+          "description": "自动切换时仅在选定订阅类型的账号间切换 (All = 不限制)"
         },
         "wfSwitcher.autoResetMachineIdOnAutoSwitch": {
           "type": "boolean",

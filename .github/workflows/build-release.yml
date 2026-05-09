@@ -1,0 +1,65 @@
+name: Build & Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号 (留空则读取 package.json)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Read version from package.json
+        id: pkg
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION=$(node -p "require('./package.json').version")
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "📦 Version: $VERSION"
+
+      - name: Build extension (webpack production)
+        run: npm run webpack
+
+      - name: Package VSIX
+        run: npx vsce package --no-dependencies --allow-star-activation -o wf-switcher-${{ steps.pkg.outputs.version }}.vsix
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.pkg.outputs.tag }}
+          name: WF-Swap ${{ steps.pkg.outputs.tag }}
+          body: |
+            ## WF-Swap ${{ steps.pkg.outputs.version }}
+
+            自动构建发布
+
+            ### 安装方式
+            1. 下载下方 `.vsix` 文件
+            2. 在 Windsurf / VS Code 中按 `Ctrl+Shift+P` → `Extensions: Install from VSIX...`
+            3. 选择下载的 `.vsix` 文件即可
+          files: wf-switcher-${{ steps.pkg.outputs.version }}.vsix
+          draft: false
+          prerelease: false
+          generate_release_notes: true
