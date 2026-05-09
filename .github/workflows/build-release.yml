@@ -42,7 +42,7 @@ jobs:
         run: npm run webpack
 
       - name: Package VSIX
-        run: npx vsce package --no-dependencies --allow-star-activation -o wf-switcher-${{ steps.pkg.outputs.version }}.vsix
+        run: npx vsce package --no-dependencies --allow-star-activation -o wf-swap-${{ steps.pkg.outputs.version }}.vsix
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -58,7 +58,7 @@ jobs:
             1. 下载下方 `.vsix` 文件
             2. 在 Windsurf / VS Code 中按 `Ctrl+Shift+P` → `Extensions: Install from VSIX...`
             3. 选择下载的 `.vsix` 文件即可
-          files: wf-switcher-${{ steps.pkg.outputs.version }}.vsix
+          files: wf-swap-${{ steps.pkg.outputs.version }}.vsix
           draft: false
           prerelease: false
           generate_release_notes: true
