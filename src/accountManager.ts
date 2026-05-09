@@ -5,6 +5,9 @@
  */
 
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 import { v4 as uuidv4 } from 'uuid';
 import { AccountInfo, AuthStrategy, GroupInfo } from './types';
 import { log } from './logger';
@@ -17,6 +20,12 @@ const TAG = 'AccountManager';
 const STORAGE_KEY = 'wfSwitcher.accounts';
 const ACTIVE_KEY = 'wfSwitcher.activeAccountId';
 const GROUPS_KEY = 'wfSwitcher.groups';
+
+/** 文件备份目录: ~/.wf-swap/ (不随扩展卸载而删除) */
+const BACKUP_DIR = path.join(os.homedir(), '.wf-swap');
+const BACKUP_ACCOUNTS_FILE = path.join(BACKUP_DIR, 'accounts.json');
+const BACKUP_GROUPS_FILE = path.join(BACKUP_DIR, 'groups.json');
+const BACKUP_ACTIVE_FILE = path.join(BACKUP_DIR, 'active.json');
 
 /* Lite 版本已移除历史系统分组. 保留老 ID 仅用于启动迁移. */
 const LEGACY_UNTRIAL_GROUP_ID = '__system_untrial__';
@@ -71,28 +80,95 @@ export class AccountManager {
     return false;
   }
 
-  /** 从持久化存储加载账号 */
+  /** 从持久化存储加载账号 (globalState 优先, 为空时从文件备份恢复) */
   private loadAccounts(): void {
-    const data = this.context.globalState.get<AccountInfo[]>(STORAGE_KEY, []);
+    let data = this.context.globalState.get<AccountInfo[]>(STORAGE_KEY, []);
+    if (data.length === 0) {
+      /* globalState 为空 (可能是重装后丢失), 尝试从文件备份恢复 */
+      const backup = this.readBackupFile<AccountInfo[]>(BACKUP_ACCOUNTS_FILE);
+      if (backup && backup.length > 0) {
+        data = backup;
+        log('info', TAG, `从文件备份恢复了 ${data.length} 个账号`);
+        /* 异步回写 globalState */
+        void this.context.globalState.update(STORAGE_KEY, data);
+      }
+    }
+    /* 回填 createdAt: 老账号没有此字段, 补上当前时间 */
+    const nowSec = Math.floor(Date.now() / 1000);
+    let backfilled = false;
+    for (const a of data) {
+      if (!a.createdAt) {
+        a.createdAt = nowSec;
+        backfilled = true;
+      }
+    }
+    if (backfilled) {
+      void this.context.globalState.update(STORAGE_KEY, data);
+    }
     this.accounts = data;
     log('info', TAG, `已加载 ${this.accounts.length} 个账号`);
   }
 
-  /** 持久化保存账号 */
+  /** 持久化保存账号 (同时写文件备份) */
   private async saveAccounts(): Promise<void> {
     await this.context.globalState.update(STORAGE_KEY, this.accounts);
+    this.writeBackupFile(BACKUP_ACCOUNTS_FILE, this.accounts);
   }
 
-  /** 从持久化存储加载分组 */
+  /** 从持久化存储加载分组 (globalState 优先, 为空时从文件备份恢复) */
   private loadGroups(): void {
-    const data = this.context.globalState.get<GroupInfo[]>(GROUPS_KEY, []);
+    let data = this.context.globalState.get<GroupInfo[]>(GROUPS_KEY, []);
+    if (data.length === 0) {
+      const backup = this.readBackupFile<GroupInfo[]>(BACKUP_GROUPS_FILE);
+      if (backup && backup.length > 0) {
+        data = backup;
+        log('info', TAG, `从文件备份恢复了 ${data.length} 个分组`);
+        void this.context.globalState.update(GROUPS_KEY, data);
+      }
+    }
     this.groups = data;
     log('info', TAG, `已加载 ${this.groups.length} 个分组`);
   }
 
-  /** 持久化保存分组 */
+  /** 持久化保存分组 (同时写文件备份) */
   private async saveGroups(): Promise<void> {
     await this.context.globalState.update(GROUPS_KEY, this.groups);
+    this.writeBackupFile(BACKUP_GROUPS_FILE, this.groups);
+  }
+
+  /* ---------- 文件备份读写 ---------- */
+
+  /** 确保备份目录存在 */
+  private ensureBackupDir(): void {
+    try {
+      if (!fs.existsSync(BACKUP_DIR)) {
+        fs.mkdirSync(BACKUP_DIR, { recursive: true });
+      }
+    } catch (e: any) {
+      log('warn', TAG, `创建备份目录失败: ${e.message}`);
+    }
+  }
+
+  /** 写文件备份 (同步, 不影响主流程) */
+  private writeBackupFile(filePath: string, data: any): void {
+    try {
+      this.ensureBackupDir();
+      fs.writeFileSync(filePath, JSON.stringify(data), 'utf8');
+    } catch (e: any) {
+      log('warn', TAG, `写入备份文件失败 ${filePath}: ${e.message}`);
+    }
+  }
+
+  /** 读文件备份 */
+  private readBackupFile<T>(filePath: string): T | null {
+    try {
+      if (!fs.existsSync(filePath)) { return null; }
+      const raw = fs.readFileSync(filePath, 'utf8');
+      return JSON.parse(raw) as T;
+    } catch (e: any) {
+      log('warn', TAG, `读取备份文件失败 ${filePath}: ${e.message}`);
+      return null;
+    }
   }
 
   /** 获取所有分组 */
@@ -185,9 +261,17 @@ export class AccountManager {
     return [...this.accounts];
   }
 
-  /** 获取当前活跃账号 */
+  /** 获取当前活跃账号 (globalState 优先, 为空时从文件备份恢复) */
   getActiveAccount(): AccountInfo | undefined {
-    const activeId = this.context.globalState.get<string>(ACTIVE_KEY);
+    let activeId = this.context.globalState.get<string>(ACTIVE_KEY);
+    if (!activeId) {
+      const backup = this.readBackupFile<{ activeAccountId?: string }>(BACKUP_ACTIVE_FILE);
+      if (backup?.activeAccountId) {
+        activeId = backup.activeAccountId;
+        void this.context.globalState.update(ACTIVE_KEY, activeId);
+        log('info', TAG, `从文件备份恢复了活跃账号 ID`);
+      }
+    }
     return this.accounts.find(a => a.id === activeId);
   }
 
@@ -200,6 +284,7 @@ export class AccountManager {
     if (account) {
       account.isActive = true;
       await this.context.globalState.update(ACTIVE_KEY, accountId);
+      this.writeBackupFile(BACKUP_ACTIVE_FILE, { activeAccountId: accountId });
       await this.saveAccounts();
       log('info', TAG, `已切换到: ${account.email}`);
     }
@@ -367,7 +452,8 @@ export class AccountManager {
         email: parsed.email,
         password: parsed.credKind === 'password' ? parsed.secret : '',
         ...(parsed.credKind === 'refresh_token' && { refreshToken: parsed.secret }),
-        ...(parsed.credKind === 'auth1_token' && { devinAuth1Token: parsed.secret })
+        ...(parsed.credKind === 'auth1_token' && { devinAuth1Token: parsed.secret }),
+        createdAt: Math.floor(Date.now() / 1000)
       };
 
       this.accounts.push(account);

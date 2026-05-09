@@ -58,6 +58,8 @@ export interface AccountInfo {
   note?: string;
   /** 所属分组 ID (空/undefined 表示"未分组") */
   groupId?: string;
+  /** 账号创建时间 (unix 秒) */
+  createdAt?: number;
 }
 
 /**
