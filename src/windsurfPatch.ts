@@ -308,6 +308,105 @@ export class WindsurfPatch {
     };
   }
 
+  getPatchDiagnostics(): {
+    windsurfPath: string;
+    extensionJsPath: string;
+    extensionJsExists: boolean;
+    writable: boolean;
+    backups: string[];
+    schemes: Array<{ id: string; description: string; applied: boolean; canApply: boolean; reason?: string }>;
+  } {
+    this.ensureInitialized();
+    const extensionJsExists = !!this.extensionJsPath && fs.existsSync(this.extensionJsPath);
+    let content = '';
+    let writable = false;
+
+    if (extensionJsExists) {
+      try {
+        content = fs.readFileSync(this.extensionJsPath, 'utf-8');
+      } catch {
+        content = '';
+      }
+
+      try {
+        fs.accessSync(this.extensionJsPath, fs.constants.W_OK);
+        writable = true;
+      } catch {
+        writable = false;
+      }
+    }
+
+    const schemes = Object.entries(PATCH_SCHEMES).map(([id, scheme]) => {
+      const applied = this.isSchemeApplied(id);
+      const readiness = this.getSchemeReadiness(id, content, extensionJsExists, applied);
+      return {
+        id,
+        description: scheme.description,
+        applied,
+        canApply: readiness.canApply,
+        reason: readiness.reason
+      };
+    });
+
+    return {
+      windsurfPath: this.windsurfPath || '',
+      extensionJsPath: this.extensionJsPath || '',
+      extensionJsExists,
+      writable,
+      backups: this.listBackupFiles(),
+      schemes
+    };
+  }
+
+  private getSchemeReadiness(
+    schemeId: string,
+    content: string,
+    extensionJsExists: boolean,
+    applied: boolean
+  ): { canApply: boolean; reason?: string } {
+    if (!extensionJsExists) {
+      return { canApply: false, reason: '未找到 Windsurf extension.js' };
+    }
+    if (!content) {
+      return { canApply: false, reason: '无法读取 Windsurf extension.js' };
+    }
+    if (applied) {
+      return { canApply: true, reason: '已应用' };
+    }
+
+    switch (schemeId) {
+      case 'auth_token_with_shit': {
+        const hasMethodAnchor = content.includes('async handleAuthToken(');
+        const hasCommandAnchor = CMD_PATTERNS.some(pattern => pattern.test(content));
+        if (hasMethodAnchor && hasCommandAnchor) {
+          return { canApply: true };
+        }
+        return {
+          canApply: false,
+          reason: !hasMethodAnchor ? '未找到 handleAuthToken 注入锚点' : '未找到命令注册注入锚点'
+        };
+      }
+      case 'seamless_timeout':
+        return TIMEOUT_PATTERN.test(content)
+          ? { canApply: true }
+          : { canApply: false, reason: '未找到 180s 超时锚点' };
+      case 'uri_handler':
+        return URI_HANDLER_REGEX.test(content)
+          ? { canApply: true }
+          : { canApply: false, reason: '未找到 URI handler 注入锚点' };
+      case 'fingerprint':
+        return FP_FUNC_PATTERNS.some(pattern => pattern.test(content))
+          ? { canApply: true }
+          : { canApply: false, reason: '未找到 generateFingerprint 注入锚点' };
+      case 'installation_id':
+        return IID_FUNC_PATTERNS.some(pattern => pattern.test(content))
+          ? { canApply: true }
+          : { canApply: false, reason: '未找到 installationId 注入锚点' };
+      default:
+        return { canApply: false, reason: '未知补丁方案' };
+    }
+  }
+
   /**
    * 判断当前补丁是否已应用 (且为当前 PATCH_VERSION)
    * 三件套缺一不可: PATCH_MARKER (方法名) + CUSTOM_COMMAND (命令名) + PATCH_VERSION (版本 marker)
@@ -525,6 +624,19 @@ export class WindsurfPatch {
       return files.some(f => f.startsWith('extension.js.backup.'));
     } catch {
       return false;
+    }
+  }
+
+  private listBackupFiles(): string[] {
+    if (!this.extensionJsPath) { return []; }
+    const dir = path.dirname(this.extensionJsPath);
+    try {
+      return fs.readdirSync(dir)
+        .filter(f => f.startsWith('extension.js.backup.') || f.startsWith('extension.js.uribackup.'))
+        .map(f => path.join(dir, f))
+        .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+    } catch {
+      return [];
     }
   }
 

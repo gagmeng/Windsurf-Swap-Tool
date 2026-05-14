@@ -14,11 +14,12 @@ import { AutoSwitch } from './autoSwitch';
 import { WindsurfPatch } from './windsurfPatch';
 import { MachineIdManager } from './machineId';
 import { getWebviewContent } from './webviewContent';
-import { CUSTOM_COMMAND } from './windsurfPatch';
 import { log } from './logger';
 import { WebviewMessage } from './types';
 import { mapLimit, resolveConcurrencyLimit } from './concurrency';
 import { InstanceManager } from './instanceManager';
+import { buildDiagnosticReport } from './diagnostics';
+import { SwitchService } from './switchService';
 
 const TAG = 'ViewProvider';
 
@@ -32,6 +33,7 @@ export class ViewProvider implements vscode.WebviewViewProvider {
   private windsurfPatch: WindsurfPatch;
   private machineIdManager: MachineIdManager;
   private instanceManager: InstanceManager;
+  private switchService: SwitchService;
   private statusBarItem: vscode.StatusBarItem;
 
   constructor(
@@ -44,6 +46,17 @@ export class ViewProvider implements vscode.WebviewViewProvider {
     this.windsurfPatch = new WindsurfPatch();
     this.machineIdManager = new MachineIdManager();
     this.instanceManager = new InstanceManager(context);
+    this.switchService = new SwitchService({
+      accountManager: this.accountManager,
+      instanceManager: this.instanceManager,
+      windsurfPatch: this.windsurfPatch,
+      postMessage: message => this.postMessage(message),
+      onStateChanged: () => {
+        this.sendFullState();
+        this.updateStatusBar();
+      },
+      onSwitchCompleted: () => this.silentResetMachineId()
+    });
 
     /* 状态栏 */
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -330,6 +343,10 @@ export class ViewProvider implements vscode.WebviewViewProvider {
         await this.handleUpdateSettings(message.payload);
         break;
 
+      case 'copyEmail':
+        await this.handleCopyEmail(message.payload?.email);
+        break;
+
       default:
         log('warn', TAG, `未知消息类型: ${message.type}`);
     }
@@ -353,6 +370,7 @@ export class ViewProvider implements vscode.WebviewViewProvider {
         schemeList: null,
         windsurfPath: this.windsurfPatch.getWindsurfPath(),
         myInstanceId: this.instanceManager.getMyInstanceId(),
+        appVersion: this.context.extension?.packageJSON?.version || 'unknown',
         /* 首屏同步 switchMode, 避免 UI toggle 默认 patch 但实际 config 是 uri
          * (真正的 uriPatchApplied/processCount 留给 getPatchStatus 按需刷新, 避免启动时扫 extension.js) */
         switchMode: config.get<string>('switchMode', 'patch'),
@@ -370,6 +388,13 @@ export class ViewProvider implements vscode.WebviewViewProvider {
         }
       }
     });
+  }
+
+  private async handleCopyEmail(email?: string): Promise<void> {
+    const value = (email || '').trim();
+    if (!value) { return; }
+    await vscode.env.clipboard.writeText(value);
+    vscode.window.showInformationMessage(`已复制邮箱: ${value}`);
   }
 
   /** 新建分组（name 为空时不操作） */
@@ -443,6 +468,7 @@ export class ViewProvider implements vscode.WebviewViewProvider {
         .get<string>('switchMode', 'patch');
       const uriPatchApplied = this.windsurfPatch.isUriPatchApplied();
       const processCount = this.windsurfPatch.getWindsurfProcessCount();
+      const patchDiagnostics = this.windsurfPatch.getPatchDiagnostics();
       this.postMessage({
         type: 'patchStatusUpdate',
         payload: {
@@ -451,14 +477,15 @@ export class ViewProvider implements vscode.WebviewViewProvider {
           windsurfPath: this.windsurfPatch.getWindsurfPath(),
           switchMode,
           uriPatchApplied,
-          processCount
+          processCount,
+          patchDiagnostics
         }
       });
     } catch (err: any) {
       log('warn', TAG, `获取补丁状态失败: ${err.message}`);
       this.postMessage({
         type: 'patchStatusUpdate',
-        payload: { patchStatus: null, schemeList: null, windsurfPath: this.windsurfPatch.getWindsurfPath() }
+        payload: { patchStatus: null, schemeList: null, patchDiagnostics: null, windsurfPath: this.windsurfPatch.getWindsurfPath() }
       });
     }
   }
@@ -814,317 +841,9 @@ export class ViewProvider implements vscode.WebviewViewProvider {
     await this.doSwitchAccount(accountId);
   }
 
-  /**
-   * 实际执行账号切换 (v3 - 支持 patch / uri 双模式)
-   *
-   * 流程 (patch 模式, 默认):
-   *   1. 冲突检测
-   *   2. 补丁状态检查, 未应用则提示
-   *   3. 登录获取 apiKey
-   *   4. 登出 + 设活跃
-   *   5. executeCommand(CUSTOM_COMMAND, {apiKey, name, apiServerUrl}) 注入 session
-   *   6. 失败重试 3 次
-   *
-   * 流程 (uri 模式, 兜底):
-   *   → 委托给 switchViaUri, 走 windsurf:// 协议回调
-   *
-   * 参考: wf-dialog-mcp WindsurfAutoLoginService.switchAccount
-   */
+  /** 实际执行账号切换 — 委托给 SwitchService */
   private async doSwitchAccount(accountId: string): Promise<void> {
-    /* 先判 switchMode 分流: 用户选 uri 模式时直接走 URI 路径, 不走补丁命令 */
-    const switchMode = vscode.workspace.getConfiguration('wfSwitcher')
-      .get<string>('switchMode', 'patch');
-    if (switchMode === 'uri') {
-      return this.switchViaUri(accountId);
-    }
-
-    this.postMessage({ type: 'switchStart', payload: { accountId } });
-
-    /* Step 0: 多分身冲突检测 */
-    const targetAcct = this.accountManager.getAccounts().find(a => a.id === accountId);
-    if (targetAcct?.email) {
-      const conflict = this.instanceManager.getConflictInstance(targetAcct.email);
-      if (conflict) {
-        const ago = conflict.lockedAt
-          ? Math.round((Date.now() - conflict.lockedAt) / 60000) + ' 分钟前'
-          : '未知时间';
-        const choice = await vscode.window.showWarningMessage(
-          `⚠️ ${targetAcct.email} 正在被「${conflict.label}」使用 (${ago})，同时使用可能导致限速或封号`,
-          '仍然切换', '取消'
-        );
-        if (choice !== '仍然切换') {
-          this.postMessage({ type: 'switchError', payload: { accountId, error: '用户取消: 账号被其他分身占用' } });
-          return;
-        }
-      }
-    }
-
-    /* Step 1: 检查补丁状态 */
-    if (!this.windsurfPatch.isPatchApplied()) {
-      const choice = await vscode.window.showWarningMessage(
-        '切号需要先应用补丁。是否立即应用？',
-        { modal: true },
-        '立即应用'
-      );
-      if (choice !== '立即应用') {
-        this.postMessage({ type: 'switchError', payload: { accountId, error: '未应用补丁' } });
-        return;
-      }
-
-      try {
-        await this.windsurfPatch.applyAll();
-        const restart = await vscode.window.showWarningMessage(
-          '✅ 补丁已应用，需要重启 Windsurf 才能生效',
-          '立即重启', '稍后重启'
-        );
-        if (restart === '立即重启') {
-          await vscode.commands.executeCommand('workbench.action.reloadWindow');
-        }
-      } catch (err: any) {
-        this.postMessage({ type: 'switchError', payload: { accountId, error: `补丁应用失败: ${err.message}` } });
-        vscode.window.showErrorMessage(`补丁应用失败: ${err.message}`);
-      }
-      return;
-    }
-
-    /* Step 2: Firebase 登录获取 apiKey */
-    const loginErr = await this.accountManager.loginAccount(accountId);
-    if (loginErr) {
-      this.postMessage({ type: 'switchError', payload: { accountId, error: loginErr } });
-      vscode.window.showErrorMessage(`切号失败: ${loginErr}`);
-      return;
-    }
-
-    const account = this.accountManager.getAccounts().find(a => a.id === accountId);
-    if (!account?.apiKey) {
-      const msg = '登录成功但未获取到 apiKey';
-      this.postMessage({ type: 'switchError', payload: { accountId, error: msg } });
-      vscode.window.showErrorMessage(`切号失败: ${msg}`);
-      return;
-    }
-
-    /* Step 3: 先登出旧账号 (静默失败) */
-    await this.tryLogout();
-
-    /* Step 4: 设置为活跃账号 (先标记，防止登出后状态混乱) */
-    await this.accountManager.setActiveAccount(accountId);
-
-    /* Step 5: 通过补丁注入的自定义命令切号 (3次重试) */
-    const payload = {
-      apiKey: account.apiKey,
-      name: account.displayName || account.email,
-      apiServerUrl: account.apiServerUrl || 'https://server.codeium.com'
-    };
-
-    let lastError: any = null;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const result: any = await vscode.commands.executeCommand(CUSTOM_COMMAND, payload);
-
-        if (result && result.error) {
-          const errMsg = typeof result.error === 'string' ? result.error : JSON.stringify(result.error);
-          log('warn', TAG, `[${attempt}/3] 切号命令返回错误: ${errMsg}`);
-          lastError = new Error(`补丁内部变量失效，请重新应用补丁`);
-          break;
-        }
-
-        log('info', TAG, `✅ 切号成功: ${account.email}`);
-        vscode.window.showInformationMessage(`✅ 已切换到: ${account.email}`);
-        this.postMessage({ type: 'switchDone', payload: { accountId } });
-        this.sendFullState();
-        this.updateStatusBar();
-
-        /* 占锁: 通知其他分身此账号已被占用 */
-        if (account.email) {
-          this.instanceManager.acquireLock(account.email);
-        }
-
-        /* 手动切号也触发静默重置机器码 (共享 autoResetMachineIdOnAutoSwitch 开关 + 冷却) */
-        this.silentResetMachineId();
-        return;
-      } catch (err: any) {
-        lastError = err;
-        log('warn', TAG, `[${attempt}/3] 切号命令执行失败: ${err.message}`);
-        if (attempt < 3) {
-          await this.delay(1500);
-        }
-      }
-    }
-
-    /* 所有重试都失败 */
-    const errMsg = lastError?.message || '未知错误';
-    log('error', TAG, `切号最终失败: ${errMsg}`);
-    this.postMessage({ type: 'switchError', payload: { accountId, error: errMsg } });
-    vscode.window.showErrorMessage(`切号失败: ${errMsg} (请确认已应用补丁并重启 Windsurf)`);
-  }
-
-  /**
-   * URI 模式切号 (兜底方案)
-   *
-   * 流程:
-   *   1. 冲突检测 (同 patch 模式)
-   *   2. 确保 URI Patch 已应用, 否则提示用户先应用并重启
-   *   3. 登录获取 apiKey / name / apiServerUrl
-   *   4. 登出旧账号 + 设活跃
-   *   5. 构造 windsurf://windsurf.windsurf/auth-callback#api_key=XXX&name=YYY&api_server_url=ZZZ
-   *      调 vscode.env.openExternal 触发 Windsurf 自己的 uriHandler
-   *      (我们打的 URI patch 会从 fragment 里提 api_key 自己写 secrets.store)
-   *   6. 占锁 + 静默重置机器码
-   *
-   * 关键区别 (相对 patch 模式):
-   *   - 不依赖 CUSTOM_COMMAND, 核心 patch 被 Windsurf 干掉也能跑
-   *   - 不会 executeCommand 直接触发 handleAuthTokenWithShit
-   *   - session 生效是异步的, 不好同步等待, 所以 openExternal 返回 true 就当成功
-   */
-  private async switchViaUri(accountId: string): Promise<void> {
-    this.postMessage({ type: 'switchStart', payload: { accountId } });
-
-    /* Step 0: 冲突检测 (复用 patch 模式的逻辑) */
-    const targetAcct = this.accountManager.getAccounts().find(a => a.id === accountId);
-    if (targetAcct?.email) {
-      const conflict = this.instanceManager.getConflictInstance(targetAcct.email);
-      if (conflict) {
-        const ago = conflict.lockedAt
-          ? Math.round((Date.now() - conflict.lockedAt) / 60000) + ' 分钟前'
-          : '未知时间';
-        const choice = await vscode.window.showWarningMessage(
-          `⚠️ ${targetAcct.email} 正在被「${conflict.label}」使用 (${ago})，同时使用可能导致限速或封号`,
-          '仍然切换', '取消'
-        );
-        if (choice !== '仍然切换') {
-          this.postMessage({ type: 'switchError', payload: { accountId, error: '用户取消: 账号被其他分身占用' } });
-          return;
-        }
-      }
-    }
-
-    /* Step 1: 确保 URI Patch 已应用 */
-    if (!this.windsurfPatch.isUriPatchApplied()) {
-      const choice = await vscode.window.showWarningMessage(
-        'URI 模式需要先应用 URI 补丁。是否立即应用？',
-        { modal: true },
-        '立即应用'
-      );
-      if (choice !== '立即应用') {
-        this.postMessage({ type: 'switchError', payload: { accountId, error: '未应用 URI 补丁' } });
-        return;
-      }
-
-      const res = await this.windsurfPatch.applyUriPatch();
-      if (!res.success) {
-        this.postMessage({ type: 'switchError', payload: { accountId, error: `URI 补丁应用失败: ${res.error}` } });
-        vscode.window.showErrorMessage(`URI 补丁应用失败: ${res.error}`);
-        return;
-      }
-
-      const restart = await vscode.window.showWarningMessage(
-        '✅ URI 补丁已应用，需要重启 Windsurf 才能生效，重启后再点击切号',
-        '立即重启', '稍后重启'
-      );
-      if (restart === '立即重启') {
-        await vscode.commands.executeCommand('workbench.action.reloadWindow');
-      }
-      this.postMessage({ type: 'switchError', payload: { accountId, error: '需要重启 Windsurf 后重试' } });
-      return;
-    }
-
-    /* Step 2: 登录拿 apiKey */
-    const loginErr = await this.accountManager.loginAccount(accountId);
-    if (loginErr) {
-      this.postMessage({ type: 'switchError', payload: { accountId, error: loginErr } });
-      vscode.window.showErrorMessage(`切号失败: ${loginErr}`);
-      return;
-    }
-
-    const account = this.accountManager.getAccounts().find(a => a.id === accountId);
-    if (!account?.apiKey) {
-      const msg = '登录成功但未获取到 apiKey';
-      this.postMessage({ type: 'switchError', payload: { accountId, error: msg } });
-      vscode.window.showErrorMessage(`切号失败: ${msg}`);
-      return;
-    }
-
-    /* Step 3: 登出旧账号 + 设活跃 */
-    await this.tryLogout();
-    await this.accountManager.setActiveAccount(accountId);
-
-    /* Step 4: 构造 URI 并触发内部 URI handler
-     *
-     * 关键: 不用 vscode.env.openExternal (走 OS 协议 → 内核 Marketplace 查找 → 报错)
-     * 改用内部命令 workbench.action.url.handle 直接分发给已注册的 URI handler
-     * 如果内部命令不可用, 回退到 openExternal (至少功能不受影响, 只是有个烦人的提示)
-     *
-     * URLSearchParams 会自动 URL-encode, fragment 里的 apiKey 可能含特殊字符安全 */
-    const fragment = new URLSearchParams({
-      api_key: account.apiKey,
-      name: account.displayName || account.email,
-      api_server_url: account.apiServerUrl || 'https://server.codeium.com'
-    }).toString();
-    const uriStr = `windsurf://windsurf.windsurf/auth-callback#${fragment}`;
-
-    try {
-      /* 优先: 内部 URI 分发 (不触发 Marketplace 查找, 不弹 "无法安装扩展" 提示) */
-      await vscode.commands.executeCommand('workbench.action.url.handle', uriStr);
-    } catch {
-      /* 回退: 旧版 Windsurf 可能没这个内部命令, 用 openExternal 兜底 */
-      try {
-        const uri = vscode.Uri.parse(uriStr);
-        const opened = await vscode.env.openExternal(uri);
-        if (!opened) {
-          const msg = 'URI 回调触发失败 (openExternal 返回 false)';
-          this.postMessage({ type: 'switchError', payload: { accountId, error: msg } });
-          vscode.window.showErrorMessage(`切号失败: ${msg}`);
-          return;
-        }
-      } catch (err: any) {
-        this.postMessage({ type: 'switchError', payload: { accountId, error: err.message } });
-        vscode.window.showErrorMessage(`URI 回调触发异常: ${err.message}`);
-        return;
-      }
-    }
-
-    /* Step 5: 上报成功 (session 生效是异步的, 无法同步等) */
-    log('info', TAG, `✅ URI 切号已触发: ${account.email}`);
-    vscode.window.showInformationMessage(`✅ 已通过 URI 回调切换到: ${account.email}`);
-    this.postMessage({ type: 'switchDone', payload: { accountId } });
-    this.sendFullState();
-    this.updateStatusBar();
-
-    /* Step 6: 占锁 + 静默重置机器码 */
-    if (account.email) {
-      this.instanceManager.acquireLock(account.email);
-    }
-    this.silentResetMachineId();
-  }
-
-  /**
-   * 尝试登出当前账号
-   * 依次尝试 windsurf.logout / codeium.signOut, 静默失败
-   */
-  private async tryLogout(): Promise<void> {
-    try {
-      const allCommands = await vscode.commands.getCommands(true);
-      const logoutCmds = ['windsurf.logout', 'codeium.signOut'];
-      for (const cmd of logoutCmds) {
-        if (allCommands.includes(cmd)) {
-          try {
-            await vscode.commands.executeCommand(cmd);
-            log('info', TAG, `已执行登出命令: ${cmd}`);
-            await this.delay(300);
-            return;
-          } catch (err: any) {
-            log('warn', TAG, `登出命令 ${cmd} 失败: ${err.message}`);
-          }
-        }
-      }
-    } catch (err: any) {
-      log('warn', TAG, `获取命令列表失败: ${err.message}`);
-    }
-  }
-
-  /** 延迟工具函数 */
-  private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return this.switchService.switchAccount(accountId);
   }
 
   /** 删除账号 */
@@ -1756,6 +1475,16 @@ export class ViewProvider implements vscode.WebviewViewProvider {
   /** 获取 AccountManager 引用 (供外部使用) */
   getAccountManager(): AccountManager {
     return this.accountManager;
+  }
+
+  /** 生成诊断报告 */
+  generateDiagnosticReport(): string {
+    return buildDiagnosticReport({
+      context: this.context,
+      accountManager: this.accountManager,
+      instanceManager: this.instanceManager,
+      windsurfPatch: this.windsurfPatch
+    });
   }
 
   /** 释放分身锁 + 注销实例 (extension deactivate 时调用) */

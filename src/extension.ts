@@ -139,6 +139,14 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand('wfSwitcher.resetMachineId', () => {
       vscode.commands.executeCommand('wfSwitcher.panel.focus');
+    }),
+
+    vscode.commands.registerCommand('wfSwitcher.diagnose', async () => {
+      const report = viewProvider!.generateDiagnosticReport();
+      await vscode.env.clipboard.writeText(report);
+      log('info', 'Diagnostics', `\n${report}`);
+      showOutput();
+      vscode.window.showInformationMessage('WF-Swap 诊断报告已复制到剪贴板，并写入输出面板');
     })
   );
 

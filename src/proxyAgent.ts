@@ -218,11 +218,15 @@ const DEFAULT_CF_PROXY = 'https://windsurfapi.karelxiaxia.workers.dev';
 
 /**
  * 获取 Cloudflare Workers 代理基础 URL
- * 优先使用用户自定义配置，否则使用内置默认地址
- * @returns 代理 URL (永远有值，不会为 null)
+ * 启用时优先使用用户自定义配置，否则使用内置默认地址
+ * @returns 代理 URL，关闭时返回 null
  */
-export function getCfProxyBaseUrl(): string {
+export function getCfProxyBaseUrl(): string | null {
   const config = vscode.workspace.getConfiguration('wfSwitcher');
+  const enabled = config.get<boolean>('cfProxyEnabled', true);
+  if (!enabled) {
+    return null;
+  }
   const cfUrl = config.get<string>('cfProxyUrl', '').trim();
   /* 用户自定义优先，否则用默认 */
   const url = cfUrl || DEFAULT_CF_PROXY;

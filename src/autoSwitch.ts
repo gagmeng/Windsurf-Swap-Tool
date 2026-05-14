@@ -20,6 +20,7 @@ export class AutoSwitch {
   private machineIdManager?: MachineIdManager;
   private windsurfPatch?: WindsurfPatch;
   private onSwitchAccount?: (accountId: string) => Promise<void>;
+  private switchInProgress: boolean = false;
 
   /** 冷却截止时间戳: 在此之前不重复触发机器码重置 */
   private resetCooldownUntil: number = 0;
@@ -95,31 +96,27 @@ export class AutoSwitch {
 
   /** 执行切换 */
   private async doSwitch(accountId: string, email: string): Promise<void> {
+    if (this.switchInProgress) {
+      log('warn', TAG, `自动切换进行中，跳过重复触发: ${email}`);
+      return;
+    }
+
+    this.switchInProgress = true;
     try {
-      /* 先登录目标账号 */
-      const loginErr = await this.accountManager.loginAccount(accountId);
-      if (loginErr) {
-        log('error', TAG, `切换失败 (${email}): ${loginErr}`);
-        vscode.window.showErrorMessage(`切换失败: ${loginErr}`);
+      if (!this.onSwitchAccount) {
+        const msg = '切号回调未初始化';
+        log('error', TAG, `自动切换失败 (${email}): ${msg}`);
+        vscode.window.showErrorMessage(`自动切换失败: ${msg}`);
         return;
       }
 
-      /* 设置为活跃账号 */
-      await this.accountManager.setActiveAccount(accountId);
-
-      /* 执行实际的 Token 注入 */
-      if (this.onSwitchAccount) {
-        await this.onSwitchAccount(accountId);
-      }
-
-      log('info', TAG, `已自动切换到: ${email}`);
-      vscode.window.showInformationMessage(`已自动切换到: ${email}`);
-
-      /* Phase 2: 自动切号后静默重置机器码 (fire-and-forget, 不阻塞切号) */
-      this.silentResetMachineId();
+      await this.onSwitchAccount(accountId);
+      log('info', TAG, `自动切换流程已触发: ${email}`);
     } catch (err: any) {
       log('error', TAG, `自动切换失败: ${err.message}`);
       vscode.window.showErrorMessage(`自动切换失败: ${err.message}`);
+    } finally {
+      this.switchInProgress = false;
     }
   }
 

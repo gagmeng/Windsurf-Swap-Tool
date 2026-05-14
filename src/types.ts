@@ -151,6 +151,23 @@ export interface PatchStatus {
   lastApplied?: number;
 }
 
+export interface PatchSchemeDiagnostic {
+  id: string;
+  description: string;
+  applied: boolean;
+  canApply: boolean;
+  reason?: string;
+}
+
+export interface PatchDiagnostics {
+  windsurfPath: string;
+  extensionJsPath: string;
+  extensionJsExists: boolean;
+  writable: boolean;
+  backups: string[];
+  schemes: PatchSchemeDiagnostic[];
+}
+
 /** 机器码信息 */
 export interface MachineIdInfo {
   /** 当前机器码 */
